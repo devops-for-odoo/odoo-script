@@ -6,16 +6,16 @@ read username
 
 # Validate username and home directory
 if ! id -u "$username" &>/dev/null; then
-  echo "❌ User '$username' does not exist. Exiting."
+  echo "User '$username' does not exist. Exiting."
   exit 1
 fi
 
 if [[ ! -d "/home/$username" ]]; then
-  echo "❌ Home directory /home/$username does not exist. Exiting."
+  echo "Home directory /home/$username does not exist. Exiting."
   exit 1
 fi
 
-echo "Enter Odoo version (e.g., 15.0, 16.0, 17.0, or 18.0):"
+echo "Enter Odoo version (e.g., 14.0, 15.0, 16.0, 17.0, or 18.0):"
 read odoo_version
 
 echo "Enter Folder Name:"
@@ -24,7 +24,7 @@ read folder_name
 # Detect existing PostgreSQL installation
 if [[ -d /etc/postgresql ]]; then
     pg_detected_version=$(ls /etc/postgresql | sort -nr | head -n1)
-    echo "Detected existing PostgreSQL installation in /etc/postgresql (version $pg_detected_version)."
+    echo "Detected existing PostgreSQL installation (version $pg_detected_version)."
     echo -n "Do you want to continue and (re)install PostgreSQL version $pg_detected_version? (y/n): "
     read continue_pg
     if [[ "$continue_pg" =~ ^[Nn]$ ]]; then
@@ -36,8 +36,14 @@ if [[ -d /etc/postgresql ]]; then
     fi
 else
     echo "No existing PostgreSQL installation detected."
-    pg_version="17"
     install_pgsql_flag=true
+
+    case "$odoo_version" in
+      14*|15*) pg_version="15" ;;
+      *) pg_version="17" ;;
+    esac
+
+    echo "Selected PostgreSQL version $pg_version for Odoo $odoo_version."
 fi
 
 # Odoo Enterprise option
@@ -55,10 +61,17 @@ ubuntu_version=$(lsb_release -rs)
 
 # Determine Python version
 case "$odoo_version" in
+  14*)
+    echo "Installing Python 3.7 for Odoo 14."
+    sudo add-apt-repository ppa:deadsnakes/ppa -y > /dev/null
+    sudo apt-get update -qq > /dev/null
+    sudo apt-get install -y python3.7 python3.7-venv python3.7-dev > /dev/null
+    python_package="python3.7"
+    ;;
   15*) python_package="python3.8" ;;
   16*|17*) python_package="python3.10" ;;
   18*)
-    echo "Odoo 18 detected. Installing Python 3.11."
+    echo "Installing Python 3.11 for Odoo 18."
     sudo add-apt-repository ppa:deadsnakes/ppa -y > /dev/null
     sudo apt-get update -qq > /dev/null
     sudo apt-get install -y python3.11 python3.11-venv python3.11-dev > /dev/null
@@ -66,6 +79,10 @@ case "$odoo_version" in
     ;;
   *) echo "Unsupported Odoo version: $odoo_version"; exit 1 ;;
 esac
+
+# Install Node.js 18
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - > /dev/null
+sudo apt install -y nodejs
 
 # Install dependencies
 sudo apt update -qq > /dev/null
@@ -90,15 +107,14 @@ sudo apt --fix-broken install -y > /dev/null
 
 # Install PostgreSQL
 if [[ "$install_pgsql_flag" == true ]]; then
-  curl -s https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add - > /dev/null
-  echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+  sudo mkdir -p /etc/apt/keyrings
+  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /etc/apt/keyrings/postgresql.gpg > /dev/null
+  echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
   sudo apt update -qq > /dev/null
   sudo apt install -y postgresql-$pg_version > /dev/null
 fi
 
 # Configure PostgreSQL
-
-# Set system password for 'postgres' Linux user
 echo "postgres:postgres" | sudo chpasswd
 sudo su - postgres -c "createuser -eld $username" 2>/dev/null || true
 sudo sed -i 's/peer/trust/g' /etc/postgresql/$pg_version/main/pg_hba.conf
@@ -121,11 +137,16 @@ sudo chown -R $username: "/home/$username/$folder_name"
 
 "$venv_path/bin/python3" -m pip install wheel > /dev/null
 
-# Patch gevent
+# Patch gevent if needed
+if [[ "$odoo_version" == 14* && "$ubuntu_version" == "22.04" ]]; then
+  "$venv_path/bin/pip" install gevent==1.5.0 --only-binary=:all: > /dev/null
+  sed -i '/gevent/d' requirements.txt
+fi
+
 if [[ "$ubuntu_version" == "22.04" ]]; then
   echo "# gevent==1.5.0 ; sys_platform != 'win32' and python_version == '3.7'" >> requirements.txt
   echo "# gevent==20.9.0 ; sys_platform != 'win32' and python_version > '3.7' and python_version <= '3.9'" >> requirements.txt
-  echo "# gevent==21.8.0 ; sys_platform != 'win32' and python_version > '3.9' and python_version < '3.12' # (Jammy)" >> requirements.txt
+  echo "# gevent==21.8.0 ; sys_platform != 'win32' and python_version > '3.9' and python_version < '3.12'" >> requirements.txt
   "$venv_path/bin/pip" install gevent==21.12.0 --only-binary=:all: > /dev/null
   sed -i '/gevent/d' requirements.txt
 fi
@@ -153,6 +174,7 @@ sudo chown $username: /home/$username/$folder_name/odoo/odoo.conf
 sudo chmod 640 /home/$username/$folder_name/odoo/odoo.conf
 
 # Final message
-echo -e "\n✅ Odoo $odoo_version installation completed."
-echo "👉 To start the server, run:"
+echo ""
+echo "Odoo $odoo_version installation completed."
+echo "To start the server, run:"
 echo "$venv_path/bin/python3 /home/$username/$folder_name/odoo/odoo-bin -c /home/$username/$folder_name/odoo/odoo.conf"
