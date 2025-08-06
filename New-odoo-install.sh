@@ -15,7 +15,7 @@ if [[ ! -d "/home/$username" ]]; then
   exit 1
 fi
 
-echo "Enter Odoo version (e.g., 14.0, 15.0, 16.0, 17.0, or 18.0):"
+echo "Enter Odoo version (13.0, 14.0, 15.0, 16.0, 17.0, 18.0):"
 read odoo_version
 
 echo "Enter Folder Name:"
@@ -38,7 +38,9 @@ else
     echo "No existing PostgreSQL installation detected."
     install_pgsql_flag=true
 
+    # Map Odoo version to PostgreSQL version
     case "$odoo_version" in
+      13*) pg_version="13" ;;
       14*|15*) pg_version="15" ;;
       *) pg_version="17" ;;
     esac
@@ -59,8 +61,23 @@ fi
 # Detect Ubuntu version
 ubuntu_version=$(lsb_release -rs)
 
-# Determine Python version
+# Determine Python version (safe logic)
 case "$odoo_version" in
+  13*)
+    if [[ "$ubuntu_version" == "24.04" ]]; then
+        echo "Using system Python 3.8 for Odoo 13 on Ubuntu 24.04"
+        python_package="python3.8"
+    elif [[ "$ubuntu_version" == "22.04" ]]; then
+        echo "Using system Python 3.10 for Odoo 13 on Ubuntu 22.04"
+        python_package="python3.10"
+    else
+        echo "Installing Python 3.6 for Odoo 13 (older Ubuntu)."
+        sudo add-apt-repository ppa:deadsnakes/ppa -y > /dev/null
+        sudo apt-get update -qq > /dev/null
+        sudo apt-get install -y python3.6 python3.6-venv python3.6-dev > /dev/null
+        python_package="python3.6"
+    fi
+    ;;
   14*)
     echo "Installing Python 3.7 for Odoo 14."
     sudo add-apt-repository ppa:deadsnakes/ppa -y > /dev/null
@@ -99,19 +116,25 @@ cd /home/$username
 if [[ "$ubuntu_version" == "20.04" ]]; then
   sudo wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6-1/wkhtmltox_0.12.6-1.focal_amd64.deb
   sudo dpkg -i wkhtmltox_0.12.6-1.focal_amd64.deb > /dev/null
-elif [[ "$ubuntu_version" == "22.04" ]]; then
+elif [[ "$ubuntu_version" == "22.04" || "$ubuntu_version" == "24.04" ]]; then
   sudo wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb
   sudo dpkg -i wkhtmltox_0.12.6.1-2.jammy_amd64.deb > /dev/null
 fi
 sudo apt --fix-broken install -y > /dev/null
 
-# Install PostgreSQL
+# Install PostgreSQL (fixed GPG key for 24.04)
 if [[ "$install_pgsql_flag" == true ]]; then
   sudo mkdir -p /etc/apt/keyrings
-  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /etc/apt/keyrings/postgresql.gpg > /dev/null
-  echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
-  sudo apt update -qq > /dev/null
-  sudo apt install -y postgresql-$pg_version > /dev/null
+  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /etc/apt/keyrings/postgresql.gpg >/dev/null
+  echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+  
+  if ! sudo apt-get update -qq; then
+      echo "Failed to update PostgreSQL repo. Retrying with fallback..."
+      sudo rm /etc/apt/sources.list.d/pgdg.list
+      sudo apt-get update -qq
+  fi
+
+  sudo apt-get install -y postgresql-$pg_version
 fi
 
 # Configure PostgreSQL
@@ -143,7 +166,7 @@ if [[ "$odoo_version" == 14* && "$ubuntu_version" == "22.04" ]]; then
   sed -i '/gevent/d' requirements.txt
 fi
 
-if [[ "$ubuntu_version" == "22.04" ]]; then
+if [[ "$ubuntu_version" == "22.04" || "$ubuntu_version" == "24.04" ]]; then
   echo "# gevent==1.5.0 ; sys_platform != 'win32' and python_version == '3.7'" >> requirements.txt
   echo "# gevent==20.9.0 ; sys_platform != 'win32' and python_version > '3.7' and python_version <= '3.9'" >> requirements.txt
   echo "# gevent==21.8.0 ; sys_platform != 'win32' and python_version > '3.9' and python_version < '3.12'" >> requirements.txt
