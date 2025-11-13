@@ -125,6 +125,20 @@ sudo -u $username $python_package -m venv "$venv_path"
 
 sudo chown -R $username: "/home/$username/$folder_name"
 
+
+# Patch gevent if needed
+if [[ "$odoo_version" == 14* && "$ubuntu_version" == "22.04" ]]; then
+  "$venv_path/bin/pip" install gevent==1.5.0 --only-binary=:all: > /dev/null
+  sed -i '/gevent/d' requirements.txt
+fi
+
+if [[ "$ubuntu_version" == "22.04" || "$ubuntu_version" == "24.04" ]]; then
+  echo "# gevent==1.5.0 ; sys_platform != 'win32' and python_version == '3.7'" >> requirements.txt
+  echo "# gevent==20.9.0 ; sys_platform != 'win32' and python_version > '3.7' and python_version <= '3.9'" >> requirements.txt
+  echo "# gevent==21.8.0 ; sys_platform != 'win32' and python_version > '3.9' and python_version < '3.12'" >> requirements.txt
+  "$venv_path/bin/pip" install gevent==21.12.0 --only-binary=:all: > /dev/null
+  sed -i '/gevent/d' requirements.txt
+fi
 # Patch gevent handling (updated for Odoo 19)
 if [[ "$ubuntu_version" == "22.04" || "$ubuntu_version" == "24.04" ]]; then
   echo "# gevent==1.5.0 ; sys_platform != 'win32' and python_version == '3.7'" >> requirements.txt
