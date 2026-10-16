@@ -44,8 +44,8 @@ fi
 
 echo
 echo "Select your installation method:"
-echo "1) Install a single Odoo version (13-19)"
-echo "2) Install all supported versions (14-18)"
+echo "1) Install a single Odoo version (from odoo13 to odoo20)"
+echo "2) Install all supported versions (from odoo13 to odoo20)"
 echo "3) Exit"
 echo
 
